@@ -1,1 +1,158 @@
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snowflake data sharing patterns</title>
+<meta property="og:title" content="9 Snowflake data sharing patterns, visualized">
+<meta property="og:description" content="Click through every way to share data in Snowflake: direct shares, reader accounts, listings, Marketplace, clean rooms and more.">
+<style>
+:root{--bg:#f2f7fb;--ink:#0d2438;--mute:#52697d;--card:#fff;--line:#cfe0ec;--blue:#1b9fd6;--amber:#d98a1f;--code:#0d2438;--codeink:#d6ecf8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0a1722;--ink:#e6f2fa;--mute:#8fa8bb;--card:#112433;--line:#22384a;--blue:#4cc4f2;--amber:#f0a94a;--code:#06101a;--codeink:#cfe8f6}}
+*{box-sizing:border-box}
+html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Bricolage Grotesque",system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto;padding:28px 18px 48px}
+h1{font-size:clamp(1.8rem,5vw,2.9rem);line-height:1.08;margin:0 0 8px;letter-spacing:-.02em}
+.sub{color:var(--mute);margin:0 0 22px;max-width:60ch}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.chip{border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:7px 14px;font:inherit;font-size:.9rem;cursor:pointer}
+.chip[aria-selected="true"]{background:var(--blue);border-color:var(--blue);color:#04202e;font-weight:600}
+.chip:focus-visible,.btn:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px}
+svg{width:100%;height:auto;display:block}
+svg text{font-family:inherit;fill:var(--ink)}
+.node{fill:var(--bg);stroke:var(--blue);stroke-width:2}
+.node.c{stroke:var(--amber)}
+.mid{fill:var(--blue);fill-opacity:.12;stroke:var(--blue);stroke-width:2;stroke-dasharray:5 4}
+.flow{stroke:var(--blue);stroke-width:3;fill:none;stroke-dasharray:3 9;stroke-linecap:round;animation:f 1.1s linear infinite}
+.flow.back{stroke:var(--amber)}
+@keyframes f{to{stroke-dashoffset:-24}}
+@media (prefers-reduced-motion:reduce){.flow{animation:none}}
+.small{font-size:12px;fill:var(--mute)!important}
+.info{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+@media (max-width:700px){.info{grid-template-columns:1fr}}
+.panel{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:16px 18px}
+.panel h2{margin:0 0 6px;font-size:1.25rem}
+.panel p{margin:0 0 10px}
+.k{color:var(--mute);font-size:.85rem;margin:10px 0 2px}
+pre{margin:0;background:var(--code);color:var(--codeink);padding:14px;border-radius:10px;overflow-x:auto;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}
+.bar{display:flex;gap:10px;align-items:center;margin:14px 0 0;color:var(--mute);font-size:.88rem}
+.btn{border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
+table{width:100%;border-collapse:collapse;font-size:.88rem;margin-top:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--mute);font-weight:600}
+.tw{overflow-x:auto;background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:4px 8px;margin-top:14px}
+tr.sel td{background:color-mix(in srgb,var(--blue) 14%,transparent)}
+tbody tr{cursor:pointer}
+</style>
+</head>
+<body>
+<main>
+  <h1>Nine ways to share data in Snowflake</h1>
+  <p class="sub">Pick a pattern to see who gets the data, what sits in the middle, and the SQL to start. No copies, no pipelines, unless you cross regions.</p>
+  <div class="chips" id="chips" role="tablist" aria-label="Sharing patterns"></div>
+  <div class="stage"><svg id="svg" viewBox="0 0 760 300" role="img" aria-label="Data sharing diagram"></svg></div>
+  <div class="bar"><button class="btn" id="play">Pause tour</button><span>The tour advances every 6 seconds until you pick a pattern.</span></div>
+  <div class="info">
+    <div class="panel">
+      <h2 id="t"></h2><p id="d"></p>
+      <div class="k">Best for</div><div id="b"></div>
+      <div class="k">Watch out for</div><div id="w"></div>
+    </div>
+    <div class="panel"><div class="k" style="margin-top:0">Starter SQL</div><pre id="sql"></pre></div>
+  </div>
+  <div class="tw"><table><thead><tr><th>Pattern</th><th>Consumer needs Snowflake</th><th>Cross-region</th><th>Who pays compute</th></tr></thead><tbody id="rows"></tbody></table></div>
+</main>
+<script>
+const P=[
+{n:"Direct share",ch:"Share object",cons:["Consumer account"],back:0,
+ d:"A provider grants read access to selected objects to named accounts. Consumers mount it as a read-only database.",
+ b:"Known partners or sibling accounts in the same cloud region.",w:"Same region only. You manage each account by hand.",
+ t:["Yes","No","Consumer"],
+ sql:"CREATE SHARE sales_share;\nGRANT USAGE ON DATABASE sales TO SHARE sales_share;\nGRANT USAGE ON SCHEMA sales.pub TO SHARE sales_share;\nGRANT SELECT ON TABLE sales.pub.orders TO SHARE sales_share;\nALTER SHARE sales_share ADD ACCOUNTS = org1.acct2;"},
+{n:"Reader account",ch:"Share + managed account",cons:["Reader account (no Snowflake contract)"],back:0,
+ d:"The provider creates a managed account for a consumer that has no Snowflake account and shares data into it.",
+ b:"Customers or vendors who only need to query or connect a BI tool.",w:"Provider pays for the reader's compute and administers it.",
+ t:["No","No","Provider"],
+ sql:"CREATE MANAGED ACCOUNT acme_reader\n  ADMIN_NAME='admin', ADMIN_PASSWORD='***',\n  TYPE=READER;\nALTER SHARE sales_share ADD ACCOUNTS = <reader_locator>;"},
+{n:"Private listing",ch:"Listing",cons:["Chosen consumer A","Chosen consumer B"],back:0,
+ d:"A listing visible only to the accounts you specify, with a title, docs, sample queries and optional request approval.",
+ b:"Curated B2B sharing with documentation and usage tracking.",w:"Consumers must be named up front.",
+ t:["Yes","Yes (auto-fulfillment)","Consumer"],
+ sql:"CREATE EXTERNAL LISTING sales_private\nSHARE sales_share AS $$\ntitle: \"Sales feed\"\nlisting_terms: { type: \"OFFLINE\" }\ntargets: { accounts: [\"org1.acct2\"] }\n$$;"},
+{n:"Marketplace listing",ch:"Public listing",cons:["Any Snowflake customer","Any Snowflake customer","Any Snowflake customer"],back:0,
+ d:"Publish to Snowflake Marketplace as free, paid or on-request data that anyone can discover and get.",
+ b:"Data products sold or offered to the broad market.",w:"Needs provider profile approval. Public by design.",
+ t:["Yes","Yes (auto-fulfillment)","Consumer"],
+ sql:"-- Create via Provider Studio, or:\nCREATE EXTERNAL LISTING weather_feed\nSHARE weather_share AS $$\ntitle: \"Weather feed\"\ntargets: { discovery: [\"ALL\"] }\n$$;"},
+{n:"Data Exchange",ch:"Private exchange",cons:["Member 1","Member 2","Member 3"],back:1,
+ d:"A private hub you administer. Approved members can publish and consume listings, so data flows both ways.",
+ b:"Industry groups, suppliers and partner networks.",w:"You run membership and governance.",
+ t:["Yes","Within exchange","Consumer"],
+ sql:"-- Exchange is enabled by Snowflake support\nCREATE DATA EXCHANGE supply_chain_hub;\nALTER DATA EXCHANGE supply_chain_hub\n  ADD MEMBER acct2;"},
+{n:"Organization listing",ch:"Internal marketplace",cons:["Team account","Team account"],back:0,
+ d:"A listing shared across accounts inside your own Snowflake organization, with discovery and optional approval.",
+ b:"Internal data products between business units or regions.",w:"Only for accounts in the same organization.",
+ t:["Yes","Yes","Consumer"],
+ sql:"CREATE ORGANIZATION LISTING hr_metrics\nSHARE hr_share AS $$\ntitle: \"HR metrics\"\ntargets: { organization: true }\n$$;"},
+{n:"Cross-region replication",ch:"Replicated copy",cons:["Account in another region or cloud"],back:0,
+ d:"Data is replicated to another region or cloud, then shared locally there. Listings can do this automatically.",
+ b:"Global consumers on a different cloud or region.",w:"Storage and transfer cost for the replica.",
+ t:["Yes","Yes","Consumer"],
+ sql:"ALTER DATABASE sales ENABLE REPLICATION\n  TO ACCOUNTS org1.eu_acct;\n-- In the target account:\nCREATE DATABASE sales AS REPLICA OF org1.us_acct.sales;"},
+{n:"Native App",ch:"App package",cons:["Consumer account"],back:0,
+ d:"Share data plus code (procedures, UDFs, Streamlit UI) as an installable app that runs in the consumer's account.",
+ b:"Selling logic and data together while protecting your IP.",w:"More build effort: versioning, testing and review.",
+ t:["Yes","Yes","Consumer"],
+ sql:"CREATE APPLICATION PACKAGE risk_app_pkg;\nCREATE SCHEMA risk_app_pkg.stage;\nPUT file://manifest.yml @risk_app_pkg.stage.files;\nALTER APPLICATION PACKAGE risk_app_pkg\n  ADD VERSION v1 USING '@risk_app_pkg.stage.files';"},
+{n:"Clean room",ch:"Clean room",cons:["Partner (brings own data)"],back:1,
+ d:"Two parties join datasets under approved templates and see only aggregated results, never each other's raw rows.",
+ b:"Audience overlap, attribution and measurement with partners.",w:"Queries are limited to approved templates.",
+ t:["Yes","Yes","Both"],
+ sql:"CALL samooha_by_snowflake_local_db\n  .provider.cleanroom_init('overlap_room','FIXED');\nCALL samooha_by_snowflake_local_db\n  .provider.add_consumers('overlap_room','partner_acct');"}
+];
+const $=id=>document.getElementById(id);
+const chips=$("chips"),rows=$("rows");
+let cur=0,timer=null,playing=true;
+P.forEach((p,i)=>{
+  const b=document.createElement("button");b.className="chip";b.role="tab";b.textContent=p.n;
+  b.onclick=()=>{stop();show(i)};chips.appendChild(b);
+  const r=document.createElement("tr");
+  r.innerHTML=`<td>${p.n}</td><td>${p.t[0]}</td><td>${p.t[1]}</td><td>${p.t[2]}</td>`;
+  r.onclick=()=>{stop();show(i)};rows.appendChild(r);
+});
+function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function box(x,y,w,h,label,sub,cls){
+  return `<rect class="node ${cls||""}" x="${x}" y="${y}" width="${w}" height="${h}" rx="12"/>
+  <text x="${x+w/2}" y="${y+h/2-(sub?2:-5)}" text-anchor="middle" font-size="15" font-weight="600">${label}</text>
+  ${sub?`<text class="small" x="${x+w/2}" y="${y+h/2+16}" text-anchor="middle">${sub}</text>`:""}`;
+}
+function draw(p){
+  const n=p.cons.length,gap=270/(n+1),ys=p.cons.map((_,i)=>30+gap*(i+1)-34);
+  let s=box(20,115,140,70,"Provider","Snowflake account");
+  s+=`<rect class="mid" x="300" y="105" width="160" height="90" rx="14"/>
+  <text x="380" y="155" text-anchor="middle" font-size="14" font-weight="600">${p.ch}</text>`;
+  s+=`<path class="flow" d="M160 150 H300"/>`;
+  p.cons.forEach((c,i)=>{
+    const cy=ys[i]+34,short=c.length>22?c.slice(0,21)+"…":c;
+    s+=`<path class="flow ${p.back?"back":""}" d="M460 150 C 520 150, 520 ${cy}, 580 ${cy}"/>`;
+    if(p.back)s+=`<path class="flow back" style="animation-direction:reverse" d="M460 150 C 520 150, 520 ${cy}, 580 ${cy}" transform="translate(0,6)"/>`;
+    s+=box(580,ys[i],160,68,short,"",`c`);
+  });
+  $("svg").innerHTML=s;
+}
+function show(i){
+  cur=i;const p=P[i];draw(p);
+  $("t").textContent=p.n;$("d").textContent=p.d;$("b").textContent=p.b;$("w").textContent=p.w;
+  $("sql").innerHTML=esc(p.sql);
+  [...chips.children].forEach((c,j)=>c.setAttribute("aria-selected",j===i));
+  [...rows.children].forEach((r,j)=>r.classList.toggle("sel",j===i));
+}
+function start(){stop();timer=setInterval(()=>show((cur+1)%P.length),6000);playing=true;$("play").textContent="Pause tour"}
+function stop(){clearInterval(timer);timer=null;playing=false;$("play").textContent="Resume tour"}
+$("play").onclick=()=>playing?stop():start();
+show(0);start();
+</script>
+</body>
+</html>
